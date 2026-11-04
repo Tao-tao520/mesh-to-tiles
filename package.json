@@ -1,0 +1,38 @@
+{
+  "name": "mesh-to-tiles",
+  "version": "0.1.0",
+  "description": "Convert a textured OBJ or glTF mesh into a 3D Tiles 1.1 implicit octree.",
+  "type": "module",
+  "bin": {
+    "mesh-to-tiles": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "pack": "node scripts/pack.mjs",
+    "pack:win": "node scripts/pack.mjs --os win32 --cpu x64",
+    "pack:linux": "node scripts/pack.mjs --os linux --cpu x64"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "@loaders.gl/textures": "^4.4.4",
+    "draco3dgltf": "^1.5.9",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}
