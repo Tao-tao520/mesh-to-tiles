@@ -54,11 +54,12 @@ function encodePixels(
   height: number,
   quality: number,
   compressionLevel: number,
+  uastc: boolean,
+  zstd: boolean,
 ): Uint8Array {
   const encoder = new basis.BasisEncoder();
   try {
     encoder.setCreateKTX2File(true);
-    encoder.setKTX2UASTCSupercompression(false);
     encoder.setKTX2SRGBTransferFunc(true);
     encoder.setPerceptual(true);
     encoder.setMipSRGB(true);
@@ -66,7 +67,8 @@ function encodePixels(
     encoder.setCompressionLevel(compressionLevel);
     encoder.setNoEndpointRDO(true);
     encoder.setNoSelectorRDO(true);
-    encoder.setUASTC(false);
+    encoder.setUASTC(uastc);
+    encoder.setKTX2UASTCSupercompression(zstd);
     encoder.setMipGen(false);
     encoder.setSliceSourceImage(0, rgba, width, height, false);
     const output = new Uint8Array(Math.max(width * height * 4, 4096));
@@ -78,13 +80,28 @@ function encodePixels(
   }
 }
 
-export async function encodeRgbaToKtx2(rgba: Uint8Array, width: number, height: number, quality = 128, compressionLevel = 2): Promise<Uint8Array> {
-  return encodePixels(await loadBasis(), rgba, width, height, quality, compressionLevel);
+export async function encodeRgbaToKtx2(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  quality = 128,
+  compressionLevel = 2,
+  uastc = false,
+  zstd = false,
+): Promise<Uint8Array> {
+  return encodePixels(await loadBasis(), rgba, width, height, quality, compressionLevel, uastc, zstd);
 }
 
-export async function encodeImageToKtx2(image: Uint8Array, maxSize: number | undefined, quality = 128, compressionLevel = 2): Promise<Uint8Array> {
+export async function encodeImageToKtx2(
+  image: Uint8Array,
+  maxSize: number | undefined,
+  quality = 128,
+  compressionLevel = 2,
+  uastc = false,
+  zstd = false,
+): Promise<Uint8Array> {
   let pipeline = sharp(image).rotate().ensureAlpha();
   if (maxSize) pipeline = pipeline.resize(maxSize, maxSize, { fit: 'inside', withoutEnlargement: true });
   const decoded = await pipeline.raw().toBuffer({ resolveWithObject: true });
-  return encodePixels(await loadBasis(), decoded.data, decoded.info.width, decoded.info.height, quality, compressionLevel);
+  return encodePixels(await loadBasis(), decoded.data, decoded.info.width, decoded.info.height, quality, compressionLevel, uastc, zstd);
 }

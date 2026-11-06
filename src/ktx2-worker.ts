@@ -10,14 +10,16 @@ interface Job {
   maxSize?: number;
   quality: number;
   compressionLevel: number;
+  uastc: boolean;
+  zstd: boolean;
 }
 
 if (!parentPort) throw new Error('ktx2-worker must be started as a worker.');
 
 parentPort.on('message', (msg: Job) => {
   const task = msg.image
-    ? encodeImageToKtx2(new Uint8Array(msg.image), msg.maxSize, msg.quality, msg.compressionLevel)
-    : encodeRgbaToKtx2(new Uint8Array(msg.rgba as ArrayBuffer), msg.width as number, msg.height as number, msg.quality, msg.compressionLevel);
+    ? encodeImageToKtx2(new Uint8Array(msg.image), msg.maxSize, msg.quality, msg.compressionLevel, msg.uastc, msg.zstd)
+    : encodeRgbaToKtx2(new Uint8Array(msg.rgba as ArrayBuffer), msg.width as number, msg.height as number, msg.quality, msg.compressionLevel, msg.uastc, msg.zstd);
   void task.then((data) => {
     parentPort?.postMessage({ id: msg.id, data }, [data.buffer as ArrayBuffer]);
   }).catch((err: Error) => {

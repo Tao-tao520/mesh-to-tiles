@@ -9,6 +9,7 @@ import sharp from 'sharp';
 import { enuTransform, gltfPosition } from './enu.js';
 import { createKtxPool, encodeKtx2, type KtxPool } from './ktx2.js';
 import { encodeSubtree, tilesetDocument } from './tileset.js';
+import { encodeRaster, limitTextureSize, type TextureSettings } from './texture.js';
 
 const MAGIC_LOW = 0x6c910ea1;
 const MAGIC_HIGH = 0x1afb4545;
@@ -737,7 +738,16 @@ async function imageBytes(image: Buffer | null): Promise<{ data: Buffer; mime: s
   return { data: image, mime: 'image/jpeg' };
 }
 
-async function writeGlb(meshes: OsgbMesh[], io: NodeIO, ktxPool: KtxPool | null, texLimit: number, outputUp: 'y' | 'z'): Promise<Buffer> {
+async function writeGlb(
+  meshes: OsgbMesh[],
+  io: NodeIO,
+  ktxPool: KtxPool | null,
+  texLimit: number,
+  outputUp: 'y' | 'z',
+  texture: TextureSettings,
+  level: number,
+  maxLevel: number,
+): Promise<Buffer> {
   const doc = new Document();
   const buffer = doc.createBuffer();
   const unlit = doc.createExtension(KHRMaterialsUnlit).createUnlit();
@@ -766,11 +776,18 @@ async function writeGlb(meshes: OsgbMesh[], io: NodeIO, ktxPool: KtxPool | null,
     const material = doc.createMaterial().setDoubleSided(true).setMetallicFactor(0).setRoughnessFactor(1);
     material.setExtension('KHR_materials_unlit', unlit);
     const encoded = await imageBytes(source.image);
-    if (encoded) {
-      const texture = doc.createTexture('baseColor');
-      texture.setImage(encoded.data);
-      texture.setMimeType(encoded.mime);
-      material.setBaseColorTexture(texture);
+    if (encoded && texture.format !== 'ktx2') {
+      const quality = level === maxLevel && texture.fineQuality > 0 ? texture.fineQuality : texture.quality;
+      const raster = await encodeRaster(encoded.data, texture.format, quality, texLimit);
+      const image = doc.createTexture('baseColor');
+      image.setImage(raster);
+      image.setMimeType(texture.format === 'webp' ? 'image/webp' : 'image/jpeg');
+      material.setBaseColorTexture(image);
+    } else if (encoded) {
+      const image = doc.createTexture('baseColor');
+      image.setImage(encoded.data);
+      image.setMimeType(encoded.mime);
+      material.setBaseColorTexture(image);
     }
     prim.setMaterial(material);
     mesh.addPrimitive(prim);
@@ -927,14 +944,13 @@ function withAncestors(content: Set<string>): Set<string> {
   return tiles;
 }
 
-function texLimit(level: number, maxLevel: number): number {
+function texLimit(level: number, maxLevel: number, settings: TextureSettings): number {
   const hops = maxLevel - level;
-  if (hops <= 0) return 2048;
-  if (hops === 1) return 1024;
-  return 512;
+  const size = hops <= 0 ? 2048 : hops === 1 ? 1024 : 512;
+  return limitTextureSize(size, settings);
 }
 
-export async function convertOsgb(inputDir: string, outputDir: string, ktx2 = true, outputUp: 'y' | 'z' = 'y', ktxLevel = 2): Promise<void> {
+export async function convertOsgb(inputDir: string, outputDir: string, outputUp: 'y' | 'z', texture: TextureSettings): Promise<void> {
   const started = Date.now();
   const located = resolveOsgbDir(inputDir);
   const meta = readMetadata(located.metaDir);
@@ -982,8 +998,8 @@ export async function convertOsgb(inputDir: string, outputDir: string, ktx2 = tr
       'draco3d.encoder': await draco3d.createEncoderModule(),
       'draco3d.decoder': await draco3d.createDecoderModule(),
     });
-  const parallel = Math.max(1, Math.min(16, os.availableParallelism()));
-  const ktxPool = ktx2 ? createKtxPool(parallel, ktxLevel) : null;
+  const parallel = Math.max(1, texture.threads > 0 ? texture.threads : Math.min(16, os.availableParallelism()));
+  const ktxPool = texture.format === 'ktx2' ? createKtxPool(parallel, texture) : null;
   const jobs = [...groups.entries()];
   let written = 0;
   console.log(`Writing ${jobs.length} tiles, ${parallel} at a time`);
@@ -995,7 +1011,7 @@ export async function convertOsgb(inputDir: string, outputDir: string, ktx2 = tr
       const [level, x, y] = key.split('/');
       const dest = path.join(outputDir, 'tiles', level, x, `${y}.glb`);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
-      const glb = await writeGlb(meshes, io, ktxPool, texLimit(Number(level), maxLevel), outputUp);
+      const glb = await writeGlb(meshes, io, ktxPool, texLimit(Number(level), maxLevel, texture), outputUp, texture, Number(level), maxLevel);
       fs.writeFileSync(dest, glb);
       written += 1;
       console.log(`  ${written}/${jobs.length}  ${key}  ${(glb.byteLength / 1024).toFixed(0)} KB  ${formatElapsed(started)}`);

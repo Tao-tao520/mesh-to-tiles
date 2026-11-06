@@ -2,6 +2,7 @@ import { Worker } from 'node:worker_threads';
 import { Document } from '@gltf-transform/core';
 import { KHRTextureBasisu } from '@gltf-transform/extensions';
 import sharp from 'sharp';
+import type { TextureSettings } from './texture.js';
 
 interface BusyWorker extends Worker {
   busy: boolean;
@@ -13,7 +14,7 @@ export interface KtxPool {
   close(): Promise<unknown>;
 }
 
-export function createKtxPool(size: number, compressionLevel = 2): KtxPool {
+export function createKtxPool(size: number, settings: TextureSettings): KtxPool {
   const workers: BusyWorker[] = Array.from({ length: size }, () => {
     const worker = new Worker(new URL('./ktx2-worker.js', import.meta.url)) as BusyWorker;
     worker.busy = false;
@@ -54,7 +55,16 @@ export function createKtxPool(size: number, compressionLevel = 2): KtxPool {
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         queue.push({
-          message: { id, rgba: copy.buffer, width, height, quality: 128, compressionLevel },
+          message: {
+            id,
+            rgba: copy.buffer,
+            width,
+            height,
+            quality: settings.ktx2Quality,
+            compressionLevel: settings.ktxLevel,
+            uastc: settings.uastc,
+            zstd: settings.zstdLevel > 0,
+          },
           transfer: [copy.buffer],
         });
         for (const worker of workers) dispatch(worker);
@@ -68,7 +78,15 @@ export function createKtxPool(size: number, compressionLevel = 2): KtxPool {
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         queue.push({
-          message: { id, image: copy.buffer, maxSize, quality: 128, compressionLevel },
+          message: {
+            id,
+            image: copy.buffer,
+            maxSize,
+            quality: settings.ktx2Quality,
+            compressionLevel: settings.ktxLevel,
+            uastc: settings.uastc,
+            zstd: settings.zstdLevel > 0,
+          },
           transfer: [copy.buffer],
         });
         for (const worker of workers) dispatch(worker);

@@ -6,6 +6,7 @@ import { repackIslands } from './atlas.js';
 import type { KtxPool } from './ktx2.js';
 import { encodeKtx2 } from './ktx2.js';
 import { gltfPosition } from './enu.js';
+import { encodeRaster, type TextureSettings } from './texture.js';
 
 export async function buildTile(
   nodeIo: NodeIO,
@@ -16,6 +17,9 @@ export async function buildTile(
   imageCache: Map<string, { data: Uint8Array; width: number; height: number }>,
   vZero: 'top' | 'bottom',
   outputUp: 'y' | 'z' = 'y',
+  texture?: TextureSettings,
+  level = 0,
+  maxLevel = 0,
 ): Promise<Buffer> {
   const doc = new Document();
   const buffer = doc.createBuffer();
@@ -25,7 +29,12 @@ export async function buildTile(
   const outMesh = doc.createMesh();
   scene.addChild(node);
   node.setMesh(outMesh);
-  addBakedPrimitive(doc, buffer, outMesh, unlit, await repackIslands(mesh, groups, texLimit, imageCache, texLimit >= 4096, vZero), outputUp);
+  const baked = await repackIslands(mesh, groups, texLimit, imageCache, texLimit >= 4096, vZero);
+  if (texture && texture.format !== 'ktx2') {
+    const quality = level === maxLevel && texture.fineQuality > 0 ? texture.fineQuality : texture.quality;
+    baked.jpeg = await encodeRaster(Buffer.from(baked.jpeg), texture.format, quality, texture.maxSize);
+  }
+  addBakedPrimitive(doc, buffer, outMesh, unlit, baked, outputUp, texture?.format === 'webp' ? 'image/webp' : 'image/jpeg');
   if (ktxPool) await encodeKtx2(doc, ktxPool);
   await doc.transform(draco({ method: 'edgebreaker', quantizePosition: 16, quantizeTexcoord: 12 }));
   return Buffer.from(await nodeIo.writeBinary(doc));
@@ -38,6 +47,7 @@ function addBakedPrimitive(
   unlit: ReturnType<KHRMaterialsUnlit['createUnlit']>,
   baked: BakedMesh,
   outputUp: 'y' | 'z',
+  mimeType: string,
 ): void {
   const glPositions = new Float32Array(baked.positions.length);
   for (let i = 0; i < baked.positions.length; i += 3) {
@@ -54,7 +64,7 @@ function addBakedPrimitive(
   material.setExtension('KHR_materials_unlit', unlit);
   const texture = doc.createTexture('baseColor');
   texture.setImage(baked.jpeg);
-  texture.setMimeType('image/jpeg');
+  texture.setMimeType(mimeType);
   material.setBaseColorTexture(texture);
   const textureInfo = material.getBaseColorTextureInfo();
   if (!textureInfo) throw new Error('Base color texture was not attached.');

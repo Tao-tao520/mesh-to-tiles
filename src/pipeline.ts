@@ -9,6 +9,7 @@ import { readGlb } from './mesh/read-glb.js';
 import { boundsOf, binTriangles } from './partition.js';
 import { buildTile } from './tile-glb.js';
 import { createKtxPool } from './ktx2.js';
+import type { TextureSettings } from './texture.js';
 import { encodeSubtree, tilesetDocument } from './tileset.js';
 
 export interface PipelineOptions {
@@ -21,8 +22,7 @@ export interface PipelineOptions {
   longitude?: number;
   latitude?: number;
   height: number;
-  ktx2: boolean;
-  ktxLevel: number;
+  texture: TextureSettings;
 }
 
 export async function run(options: PipelineOptions): Promise<void> {
@@ -45,7 +45,7 @@ export async function run(options: PipelineOptions): Promise<void> {
     });
 
   console.log(`Reading ${inputPath} (output up=${outputUp})`);
-  const mesh = ext === '.obj' ? await readObj(inputPath, 'z') : await readGlb(inputPath, io, 'y');
+  const mesh = ext === '.obj' ? await readObj(inputPath, 'z') : await readGlb(inputPath, io, 'z');
   if (!mesh.groups.length) throw new Error('No textured triangles were read.');
 
   const bounds = boundsOf(mesh);
@@ -70,16 +70,18 @@ export async function run(options: PipelineOptions): Promise<void> {
 
   const available = new Set<string>();
   let written = 0;
-  const parallel = Math.max(1, Math.min(16, os.availableParallelism()));
-  const ktxPool = options.ktx2 ? createKtxPool(parallel, options.ktxLevel) : null;
+  const parallel = Math.max(1, options.texture.threads > 0 ? options.texture.threads : Math.min(16, os.availableParallelism()));
+  const ktxPool = options.texture.format === 'ktx2' ? createKtxPool(parallel, options.texture) : null;
   const tileJobs = [...tiles.entries()];
   console.log(`Writing ${tileJobs.length} tiles, ${parallel} at a time`);
   for (let start = 0; start < tileJobs.length; start += parallel) {
     const batch = tileJobs.slice(start, start + parallel);
     await Promise.all(batch.map(async ([key, groups]) => {
       const [level, x, y, z] = key.split('/').map(Number);
-      const texSize = Math.max(128, 4096 / 2 ** (maxLevel - level));
-      const glb = await buildTile(io, mesh, groups, texSize, ktxPool, imageCache, ext === '.obj' ? 'bottom' : 'top', outputUp);
+      const texSize = options.texture.maxSize > 0
+        ? Math.min(options.texture.maxSize, Math.max(128, 4096 / 2 ** (maxLevel - level)))
+        : Math.max(128, 4096 / 2 ** (maxLevel - level));
+      const glb = await buildTile(io, mesh, groups, texSize, ktxPool, imageCache, ext === '.obj' ? 'bottom' : 'top', outputUp, options.texture, level, maxLevel);
       const dest = path.join(outputDir, 'tiles', String(level), String(x), String(y), `${z}.glb`);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, glb);

@@ -12,7 +12,7 @@
 | OSGB → 3D Tiles | 读取目录里的 `metadata.xml` 和 `.osgb`，沿 PagedLOD 生成隐式四叉树。只支持 WGS84 UTM（EPSG:326xx / 327xx） |
 | 单张图集 | OBJ / glTF 每个瓦片重烘焙一张图集，UV 岛按原贴图重排；最细 4096，向上逐级减半，最低 128 |
 | Draco 几何压缩 | 使用 `draco3dgltf` 编码，输出符合 `KHR_draco_mesh_compression`，材质 unlit、双面 |
-| KTX2 纹理压缩 | 默认 ETC1S（Basis Universal，质量 128，压缩力度默认 2，可用 `--ktx-level` 设为 0–6，关闭 endpoint / selector RDO，无 mipmap），符合 `KHR_texture_basisu`。最多 16 个 worker。`--no-ktx2` 时 OBJ / glTF 为 PNG，OSGB 为 JPEG |
+| KTX2 纹理压缩 | 默认关闭，贴图是 JPEG，质量 75。`--texture-format ktx2` 后使用 ETC1S，质量 128，压缩力度 2，关闭 RDO。`--ktx2-uastc` 改用 UASTC。`--ktx2-zstd-level` 大于 0 时为 UASTC 打开 Zstandard。最多 16 个纹理同时编码 |
 | 输出方向 | `--up` 是输出 glTF 的向上轴。不传时 OBJ、glTF、OSGB 都是 `y`，这是 Cesium 的正确方向 |
 | 地理定位 | OBJ / glTF 用经度、纬度和椭球高定位局部原点 `(0,0,0)`。OSGB 用 `metadata.xml` 的 `SRSOrigin` 反算经纬度 |
 
@@ -105,8 +105,16 @@ mesh-to-tiles --input D:\terra_osgbs\terra_osgbs --output D:\terra_osgbs\tiles-q
 | `--longitude` | OBJ / glTF 局部原点经度，度 | 不写 |
 | `--latitude` | OBJ / glTF 局部原点纬度，度 | 不写 |
 | `--height` | OBJ / glTF 局部原点椭球高，米 | `0` |
-| `--no-ktx2` | OBJ / glTF 图集保持 PNG，OSGB 贴图保持 JPEG | KTX2 开启 |
-| `--ktx-level` | ETC1S 压缩力度，0–6。越大越慢，体积通常更小。OBJ、glTF、OSGB 相同 | `2` |
+| `--no-ktx2` | 强制 JPEG | 默认已是 JPEG |
+| `--texture-format` | `jpeg`、`webp` 或 `ktx2` | `jpeg` |
+| `--texture-quality` | JPEG / WebP 质量，1–100 | `75` |
+| `--fine-texture-quality` | 最细一层的 JPEG / WebP 质量，0 表示沿用 `--texture-quality` | `0` |
+| `--max-texture-size` | 贴图边长上限，0 表示不限制 | `4096` |
+| `--ktx2-quality` | ETC1S 为 1–255，UASTC 为 0–4 | `128` |
+| `--ktx2-uastc` | KTX2 使用 UASTC | 关闭 |
+| `--ktx2-threads` | 同时编码的纹理数，0 为自动，最多 16。每张纹理仍是单线程 | `0` |
+| `--ktx2-zstd-level` | UASTC 的 Zstandard，0 关闭，1–22 打开。此编码器不能指定具体等级 | `0` |
+| `--ktx-level` | ETC1S 压缩力度，0–6 | `2` |
 
 ## OSGB
 
@@ -142,7 +150,7 @@ tiles/
 
 `tileset.json` 为 3D Tiles 1.1，`refine` 为 `REPLACE`。OBJ / glTF 的 `subdivisionScheme` 为 `OCTREE`，OSGB 为 `QUADTREE`。一个 subtree 覆盖全部层级。glTF 内容默认 Y 轴向上、unlit、Draco 压缩。底色贴图默认为 `image/ktx2`，并声明 `KHR_texture_basisu`。
 
-OBJ / glTF 在 `--no-ktx2` 时贴图为 PNG。层级 `L` 的图集边长为 `max(128, 4096 / 2^(maxLevel - L))`。只有 4096 那一层按原图分辨率采样，更小的层级先缩到 2048 再采样。OSGB 在 `--no-ktx2` 时贴图为原始 JPEG。
+默认贴图是 JPEG，质量 75。`--texture-format webp` 或 `ktx2` 才切换格式。层级 `L` 的 OBJ / glTF 图集边长为 `min(最大边长, max(128, 4096 / 2^(maxLevel - L)))`。OSGB 最细层 2048，上一层 1024，更粗为 512，同样受 `--max-texture-size` 限制。
 
 ## 许可
 
