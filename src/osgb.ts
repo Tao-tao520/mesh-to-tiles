@@ -966,9 +966,15 @@ export async function convertOsgb(inputDir: string, outputDir: string, ktx2 = tr
   const maxLevel = depth.max;
   const levels = maxLevel + 1;
   const rootError = 2 ** maxLevel;
-  console.log(`OSGB ${meta.srs} origin ${georef.longitude.toFixed(6)}, ${georef.latitude.toFixed(6)}, ${georef.height.toFixed(2)}`);
-  console.log(`OSGB root ${roots.join(', ')} from ${located.dataDir}`);
-  console.log(`Implicit quadtree levels=${levels} tiles=${content.size} nodes=${seq.n} rootError=${rootError}`);
+  const sizeX = bounds.maxX - bounds.minX;
+  const sizeY = bounds.maxY - bounds.minY;
+  const sizeZ = bounds.maxZ - bounds.minZ;
+  console.log(`Reading ${path.resolve(inputDir)} (output up=${outputUp})`);
+  console.log(
+    `Bounds x[${bounds.minX.toFixed(1)}, ${bounds.maxX.toFixed(1)}] y[${bounds.minY.toFixed(1)}, ${bounds.maxY.toFixed(1)}] z[${bounds.minZ.toFixed(1)}, ${bounds.maxZ.toFixed(1)}]`,
+  );
+  console.log(`Quadtree levels=${levels} finestCell=${(Math.max(sizeX, sizeY) / 2 ** maxLevel).toFixed(1)}m rootError=${rootError}`);
+  console.log(`Occupied tiles: ${content.size}`);
 
   const io = new NodeIO()
     .registerExtensions([KHRDracoMeshCompression, KHRMaterialsUnlit, KHRTextureBasisu])
@@ -980,6 +986,7 @@ export async function convertOsgb(inputDir: string, outputDir: string, ktx2 = tr
   const ktxPool = ktx2 ? createKtxPool(parallel, ktxLevel) : null;
   const jobs = [...groups.entries()];
   let written = 0;
+  console.log(`Writing ${jobs.length} tiles, ${parallel} at a time`);
   for (let start = 0; start < jobs.length; start += parallel) {
     const batch = jobs.slice(start, start + parallel);
     await Promise.all(batch.map(async ([key, caches]) => {
@@ -988,9 +995,10 @@ export async function convertOsgb(inputDir: string, outputDir: string, ktx2 = tr
       const [level, x, y] = key.split('/');
       const dest = path.join(outputDir, 'tiles', level, x, `${y}.glb`);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.writeFileSync(dest, await writeGlb(meshes, io, ktxPool, texLimit(Number(level), maxLevel), outputUp));
+      const glb = await writeGlb(meshes, io, ktxPool, texLimit(Number(level), maxLevel), outputUp);
+      fs.writeFileSync(dest, glb);
       written += 1;
-      if (written % 25 === 0) console.log(`  ${written}/${jobs.length}`);
+      console.log(`  ${written}/${jobs.length}  ${key}  ${(glb.byteLength / 1024).toFixed(0)} KB  ${formatElapsed(started)}`);
     }));
   }
   if (ktxPool) await ktxPool.close();
@@ -999,7 +1007,25 @@ export async function convertOsgb(inputDir: string, outputDir: string, ktx2 = tr
   fs.mkdirSync(path.join(outputDir, 'subtrees', '0', '0'), { recursive: true });
   fs.writeFileSync(path.join(outputDir, 'subtrees', '0', '0', '0.subtree'), subtree);
   const tileset = tilesetDocument(bounds, rootError, levels, georef, 'QUADTREE');
+  console.log(`Placed local origin at lon=${georef.longitude} lat=${georef.latitude} height=${georef.height}`);
   fs.writeFileSync(path.join(outputDir, 'tileset.json'), JSON.stringify(tileset));
-  const seconds = Math.round((Date.now() - started) / 1000);
-  console.log(`Done. ${written} tiles, ${seconds}s -> ${outputDir}`);
+  console.log(`Done. ${written} tiles, ${(dirSize(outputDir) / 1024 / 1024).toFixed(1)} MB, ${formatElapsed(started)} -> ${outputDir}`);
+}
+
+function formatElapsed(started: number): string {
+  const total = Math.round((Date.now() - started) / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}h${String(minutes).padStart(2, '0')}m${String(seconds).padStart(2, '0')}s`;
+  return `${minutes}m${String(seconds).padStart(2, '0')}s`;
+}
+
+function dirSize(dir: string): number {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    total += entry.isDirectory() ? dirSize(full) : fs.statSync(full).size;
+  }
+  return total;
 }
