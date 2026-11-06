@@ -1,18 +1,20 @@
 # mesh-to-tiles
 
-把带贴图的 OBJ 或 glTF 网格转成 [3D Tiles 1.1](https://github.com/CesiumGS/3d-tiles) 隐式八叉树。
+支持 OBJ、glTF、 OSGB 倾斜摄影，转成 [3D Tiles 1.1](https://github.com/CesiumGS/3d-tiles)。
 
-每个瓦片是一个 Draco 网格加一张重烘焙的图集。最精细一层为 4096 像素，从原图采样；更粗的层级逐级减半，最低 128。图集默认编码为 KTX2 ETC1S。
+入口是同一个命令。`--input` 是文件时走 OBJ / glTF，输出隐式八叉树；是目录时走 OSGB，输出隐式四叉树。两种都默认输出 Draco 网格和 KTX2 ETC1S。
 
 ## 核心特性
 
 | 特性 | 说明 |
 | --- | --- |
 | OBJ / glTF / GLB → 3D Tiles | 隐式八叉树，按模型包围盒自动生成 LOD，`refine` 为 `REPLACE`。GLB 可含 Draco |
-| 单张图集 | 每个瓦片重烘焙一张图集，UV 岛按原贴图重排；最细 4096，向上逐级减半，最低 128 |
+| OSGB → 3D Tiles | 读取目录里的 `metadata.xml` 和 `.osgb`，沿 PagedLOD 生成隐式四叉树。只支持 WGS84 UTM（EPSG:326xx / 327xx） |
+| 单张图集 | OBJ / glTF 每个瓦片重烘焙一张图集，UV 岛按原贴图重排；最细 4096，向上逐级减半，最低 128 |
 | Draco 几何压缩 | 使用 `draco3dgltf` 编码，输出符合 `KHR_draco_mesh_compression`，材质 unlit、双面 |
-| KTX2 纹理压缩 | 默认 ETC1S（Basis Universal，质量 128，无 mipmap），符合 `KHR_texture_basisu`；`worker_threads` 并行编码。`--no-ktx2` 改为 PNG |
-| 地理定位 | 经度、纬度、椭球高定位局部原点 `(0,0,0)`。`--up` 表示输入模型的向上轴 |
+| KTX2 纹理压缩 | 默认 ETC1S（Basis Universal，质量 128，压缩力度默认 2，可用 `--ktx-level` 设为 0–6，关闭 endpoint / selector RDO，无 mipmap），符合 `KHR_texture_basisu`。最多 16 个 worker。`--no-ktx2` 时 OBJ / glTF 为 PNG，OSGB 为 JPEG |
+| 输出方向 | `--up` 是输出 glTF 的向上轴。不传时 OBJ、glTF、OSGB 都是 `y`，这是 Cesium 的正确方向 |
+| 地理定位 | OBJ / glTF 用经度、纬度和椭球高定位局部原点 `(0,0,0)`。OSGB 用 `metadata.xml` 的 `SRSOrigin` 反算经纬度 |
 
 ## 技术栈
 
@@ -22,7 +24,7 @@
 | glTF 读写与 Draco | `@gltf-transform/core`、`extensions`、`functions`，`draco3dgltf` |
 | 贴图缩放与采样 | `sharp` |
 | KTX2 | `@loaders.gl/textures` 中的 Basis Universal WASM，`worker_threads` 并行 |
-| 瓦片格式 | 3D Tiles 1.1 implicit octree，`KHR_draco_mesh_compression`，`KHR_materials_unlit`，可选 `KHR_texture_basisu` |
+| 瓦片格式 | 3D Tiles 1.1 implicit tiling，`KHR_draco_mesh_compression`，`KHR_materials_unlit`，可选 `KHR_texture_basisu` |
 
 KTX2 编码在 CPU 上完成。Cesium 加载时再把 ETC1S 转成当前显卡的块压缩格式。
 
@@ -30,6 +32,7 @@ KTX2 编码在 CPU 上完成。Cesium 加载时再把 ETC1S 转成当前显卡�
 
 - Node.js 18 或更高
 - 带贴图的 `.obj`（含 `.mtl` 和 `map_Kd`），或带底色贴图的 `.glb` / `.gltf`
+- 或一个 OSGB 目录：根上有 `metadata.xml` 和入口 `.osgb`，分页文件在子目录中
 
 ## 安装
 
@@ -42,6 +45,7 @@ npm run build
 
 ```bash
 node dist/cli.js --input model.obj --output ./tiles
+node dist/cli.js --input D:\terra_osgbs\terra_osgbs --output D:\terra_osgbs\tiles-quad
 ```
 
 ## 发布包
@@ -65,7 +69,7 @@ Linux：
 
 ```bash
 chmod +x mesh-to-tiles
-./mesh-to-tiles --input model.obj --output ./tiles --up z --longitude 109.40 --latitude 34.03 --height 0
+./mesh-to-tiles --input model.obj --output ./tiles --longitude 109.40 --latitude 34.03 --height 0
 ```
 
 或链接到全局命令：
@@ -79,30 +83,46 @@ mesh-to-tiles --input model.obj --output ./tiles
 
 ```bash
 mesh-to-tiles --input model.glb --output ./tiles --longitude 109.40388330 --latitude 34.03154500 --height 0
+mesh-to-tiles --input D:\terra_osgbs\terra_osgbs --output D:\terra_osgbs\tiles-quad
 ```
 
-`--up` 只描述输入模型的向上轴，不改变输出方向。OBJ 默认 `z`，glTF / GLB 默认 `y`。ODM 导出的 OBJ 和 GLB 顶点都是 Z 轴向上，OBJ 可以不写，GLB 要写 `--up z`。
+`--input` 指向文件时转换 OBJ / glTF，指向目录时转换 OSGB。共用 `--output`、`--up` 和 `--no-ktx2`。`--leaf-size`、`--leaf-error`、`--max-levels`、`--longitude`、`--latitude`、`--height` 只用于 OBJ / glTF，OSGB 会忽略它们。
 
-输出固定为两套坐标：瓦片局部坐标是 Z 轴向上、单位米；瓦片内的 glTF 按规范写成 Y 轴向上，Cesium 加载时会转回 Z 轴向上。`--longitude`、`--latitude`、`--height` 是局部原点 `(0,0,0)` 的大地坐标，不会从网格里读取。`--height` 是该原点的 WGS84 椭球高，不是离地高度。顶点原来的 Z 会保留。
+不传 `--up` 时，OBJ、glTF 和 OSGB 都输出为 Y 轴向上。传了 `--up y` 或 `--up z` 就按传入的方向写，不区分输入格式。`y` 是 Cesium 的正确方向：Cesium 把 glTF 当作 Y 轴向上，再绕 X 轴转成东北天的 Z 轴向上。`--up z` 会把 Z 轴向上的坐标直接写入 glTF，Cesium 加载后模型会倒向一边。
+
+瓦片包围盒和东北天变换始终是 Z 轴向上、单位米，不随 `--up` 改变。`--longitude`、`--latitude`、`--height` 是局部原点 `(0,0,0)` 的大地坐标，不会从网格里读取。`--height` 是该原点的 WGS84 椭球高，不是离地高度。经度和纬度要么一起传，要么都不传。
 
 ### 参数
 
 | 参数 | 说明 | 默认 |
 | --- | --- | --- |
-| `--input` | `.obj`、`.glb` 或 `.gltf` | 必填 |
+| `--input` | `.obj`、`.glb`、`.gltf`，或含 `metadata.xml` 的 OSGB 目录 | 必填 |
 | `--output` | 输出目录，每次运行会先清空 | 必填 |
-| `--up z\|y` | 输入模型的向上轴 | OBJ 为 `z`，glTF / GLB 为 `y` |
-| `--leaf-size` | 最细格子边长，米 | `40` |
-| `--leaf-error` | 最细层级的 `geometricError`，米 | `1` |
-| `--max-levels` | 层级数上限 | `6` |
-| `--longitude` | 局部原点经度，度 | 不写 |
-| `--latitude` | 局部原点纬度，度 | 不写 |
-| `--height` | 局部原点椭球高，米 | `0` |
-| `--no-ktx2` | 图集保持 PNG，不编码 KTX2 | KTX2 开启 |
+| `--up y\|z` | 输出 glTF 的向上轴。OBJ、glTF、OSGB 相同 | `y` |
+| `--leaf-size` | OBJ / glTF 最细格子边长，米 | `40` |
+| `--leaf-error` | OBJ / glTF 最细层级的 `geometricError`，米 | `1` |
+| `--max-levels` | OBJ / glTF 层级数上限 | `6` |
+| `--longitude` | OBJ / glTF 局部原点经度，度 | 不写 |
+| `--latitude` | OBJ / glTF 局部原点纬度，度 | 不写 |
+| `--height` | OBJ / glTF 局部原点椭球高，米 | `0` |
+| `--no-ktx2` | OBJ / glTF 图集保持 PNG，OSGB 贴图保持 JPEG | KTX2 开启 |
+| `--ktx-level` | ETC1S 压缩力度，0–6。越大越慢，体积通常更小。OBJ、glTF、OSGB 相同 | `2` |
 
-经度和纬度要么一起传，要么都不传。
+## OSGB
+
+目录里需要 `metadata.xml`（`SRS` 或 `CoordSys`，以及 `SRSOrigin`）和至少一个 `.osgb`。`metadata.xml` 可以在传入目录、数据目录或上一级。坐标系只支持 WGS84 UTM，即 EPSG:326xx 或 EPSG:327xx。`SRSOrigin` 的东坐标、北坐标和高程会反算成经纬度和椭球高，写进根节点 `transform`。顶点已经是相对 `SRSOrigin` 的局部坐标。
+
+输入目录会自动定位数据。目录本身没有 `.osgb` 时，会进入唯一的子目录，或名为 `Data` 的子目录。根文件按 `Data.osgb`、`tileset.osgb`、`Block.osgb` 的顺序选取。都没有时，如果文件名全是数字，用最短的那个作为根；否则读取该目录下的每一个 `.osgb`。子文件仍按 OSGB 里的相对路径打开。
+
+OSGB 使用隐式四叉树，不使用八叉树。倾斜摄影的父子瓦片是在地面上分块的，八叉树还会把高度切成上下两半，替换时容易出现空块。子瓦片落在父格子的四个象限之一，用子网格中心相对父格子中心的平面位置决定。没有网格的根如果只有一个子节点，就折叠成第 0 层。根节点 `geometricError` 为 `2^最大层`。
+
+贴图按离最细层的距离限制边长：最细层 2048，上一层 1024，更粗的层级 512。几何使用 Draco sequential，位置量化 14，纹理坐标量化 12。
+
+压缩过的 OSGB，以及 UTM 以外的坐标系，目前不能转换。
 
 ## 输出
+
+OBJ / glTF：
 
 ```text
 tiles/
@@ -111,9 +131,18 @@ tiles/
   subtrees/0/0/0/0.subtree
 ```
 
-`tileset.json` 为 3D Tiles 1.1，`subdivisionScheme` 为 `OCTREE`，`refine` 为 `REPLACE`。一个 subtree 覆盖全部层级。glTF 内容为 Y 轴向上、unlit、Draco 压缩。底色贴图默认为 `image/ktx2`，并声明 `KHR_texture_basisu`。`--no-ktx2` 时贴图为 PNG。
+OSGB：
 
-层级 `L` 的图集边长为 `max(128, 4096 / 2^(maxLevel - L))`。只有 4096 那一层按原图分辨率采样，更小的层级先缩到 2048 再采样。
+```text
+tiles/
+  tileset.json
+  tiles/{level}/{x}/{y}.glb
+  subtrees/0/0/0.subtree
+```
+
+`tileset.json` 为 3D Tiles 1.1，`refine` 为 `REPLACE`。OBJ / glTF 的 `subdivisionScheme` 为 `OCTREE`，OSGB 为 `QUADTREE`。一个 subtree 覆盖全部层级。glTF 内容默认 Y 轴向上、unlit、Draco 压缩。底色贴图默认为 `image/ktx2`，并声明 `KHR_texture_basisu`。
+
+OBJ / glTF 在 `--no-ktx2` 时贴图为 PNG。层级 `L` 的图集边长为 `max(128, 4096 / 2^(maxLevel - L))`。只有 4096 那一层按原图分辨率采样，更小的层级先缩到 2048 再采样。OSGB 在 `--no-ktx2` 时贴图为原始 JPEG。
 
 ## 许可
 

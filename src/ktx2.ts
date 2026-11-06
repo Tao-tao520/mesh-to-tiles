@@ -9,10 +9,11 @@ interface BusyWorker extends Worker {
 
 export interface KtxPool {
   encode(rgba: Uint8Array, width: number, height: number): Promise<Buffer>;
+  encodeImage(image: Buffer, maxSize: number): Promise<Buffer>;
   close(): Promise<unknown>;
 }
 
-export function createKtxPool(size: number): KtxPool {
+export function createKtxPool(size: number, compressionLevel = 2): KtxPool {
   const workers: BusyWorker[] = Array.from({ length: size }, () => {
     const worker = new Worker(new URL('./ktx2-worker.js', import.meta.url)) as BusyWorker;
     worker.busy = false;
@@ -53,7 +54,21 @@ export function createKtxPool(size: number): KtxPool {
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         queue.push({
-          message: { id, rgba: copy.buffer, width, height, quality: 128 },
+          message: { id, rgba: copy.buffer, width, height, quality: 128, compressionLevel },
+          transfer: [copy.buffer],
+        });
+        for (const worker of workers) dispatch(worker);
+      });
+    },
+    encodeImage(image, maxSize) {
+      const id = nextId;
+      nextId += 1;
+      const copy = new Uint8Array(image.byteLength);
+      copy.set(image);
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        queue.push({
+          message: { id, image: copy.buffer, maxSize, quality: 128, compressionLevel },
           transfer: [copy.buffer],
         });
         for (const worker of workers) dispatch(worker);
@@ -65,12 +80,13 @@ export function createKtxPool(size: number): KtxPool {
   };
 }
 
-export async function encodeKtx2(doc: Document, pool: KtxPool): Promise<void> {
+export async function encodeKtx2(doc: Document, pool: KtxPool, maxSize?: number): Promise<void> {
   doc.createExtension(KHRTextureBasisu).setRequired(true);
   const textures = doc.getRoot().listTextures();
   const encoded = await Promise.all(textures.map(async (texture) => {
     const image = texture.getImage();
     if (!image) throw new Error('Texture has no image.');
+    if (maxSize) return { texture, ktx: await pool.encodeImage(Buffer.from(image), maxSize) };
     const decoded = await sharp(Buffer.from(image)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const ktx = await pool.encode(decoded.data, decoded.info.width, decoded.info.height);
     return { texture, ktx };

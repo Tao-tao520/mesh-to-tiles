@@ -1,3 +1,8 @@
+export function gltfPosition(up: 'y' | 'z', x: number, y: number, z: number): [number, number, number] {
+  if (up === 'z') return [x, y, z];
+  return [x, z, -y];
+}
+
 export function enuTransform(longitudeDeg: number, latitudeDeg: number, height: number): number[] {
   const lon = (longitudeDeg * Math.PI) / 180;
   const lat = (latitudeDeg * Math.PI) / 180;

@@ -22,6 +22,7 @@ export interface PipelineOptions {
   latitude?: number;
   height: number;
   ktx2: boolean;
+  ktxLevel: number;
 }
 
 export async function run(options: PipelineOptions): Promise<void> {
@@ -29,8 +30,8 @@ export async function run(options: PipelineOptions): Promise<void> {
   const inputPath = path.resolve(options.input);
   const outputDir = path.resolve(options.output);
   const ext = path.extname(inputPath).toLowerCase();
-  const up = options.up ?? (ext === '.obj' ? 'z' : 'y');
-  if (up !== 'z' && up !== 'y') throw new Error('--up must be z or y');
+  const outputUp = options.up ?? 'y';
+  if (outputUp !== 'z' && outputUp !== 'y') throw new Error('--up must be z or y');
   const hasGeoref = options.longitude !== undefined || options.latitude !== undefined;
   if (hasGeoref && (options.longitude === undefined || options.latitude === undefined)) {
     throw new Error('Pass both --longitude and --latitude, or neither. Height is not inferred.');
@@ -43,8 +44,8 @@ export async function run(options: PipelineOptions): Promise<void> {
       'draco3d.decoder': await draco3d.createDecoderModule(),
     });
 
-  console.log(`Reading ${inputPath} (up=${up})`);
-  const mesh = ext === '.obj' ? await readObj(inputPath, up) : await readGlb(inputPath, io, up);
+  console.log(`Reading ${inputPath} (output up=${outputUp})`);
+  const mesh = ext === '.obj' ? await readObj(inputPath, 'z') : await readGlb(inputPath, io, 'y');
   if (!mesh.groups.length) throw new Error('No textured triangles were read.');
 
   const bounds = boundsOf(mesh);
@@ -69,8 +70,8 @@ export async function run(options: PipelineOptions): Promise<void> {
 
   const available = new Set<string>();
   let written = 0;
-  const parallel = Math.max(1, Math.min(10, os.availableParallelism() - 1));
-  const ktxPool = options.ktx2 ? createKtxPool(parallel) : null;
+  const parallel = Math.max(1, Math.min(16, os.availableParallelism()));
+  const ktxPool = options.ktx2 ? createKtxPool(parallel, options.ktxLevel) : null;
   const tileJobs = [...tiles.entries()];
   console.log(`Writing ${tileJobs.length} tiles, ${parallel} at a time`);
   for (let start = 0; start < tileJobs.length; start += parallel) {
@@ -78,7 +79,7 @@ export async function run(options: PipelineOptions): Promise<void> {
     await Promise.all(batch.map(async ([key, groups]) => {
       const [level, x, y, z] = key.split('/').map(Number);
       const texSize = Math.max(128, 4096 / 2 ** (maxLevel - level));
-      const glb = await buildTile(io, mesh, groups, texSize, ktxPool, imageCache, ext === '.obj' ? 'bottom' : 'top');
+      const glb = await buildTile(io, mesh, groups, texSize, ktxPool, imageCache, ext === '.obj' ? 'bottom' : 'top', outputUp);
       const dest = path.join(outputDir, 'tiles', String(level), String(x), String(y), `${z}.glb`);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, glb);
