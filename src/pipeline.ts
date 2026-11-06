@@ -37,6 +37,7 @@ export async function run(options: PipelineOptions): Promise<void> {
     throw new Error('Pass both --longitude and --latitude, or neither. Height is not inferred.');
   }
 
+  try {
   const io = new NodeIO()
     .registerExtensions([KHRDracoMeshCompression, KHRMaterialsUnlit, KHRTextureBasisu])
     .registerDependencies({
@@ -107,6 +108,20 @@ export async function run(options: PipelineOptions): Promise<void> {
   else console.log('No --longitude/--latitude given. Tileset stays in local Z-up meters.');
   fs.writeFileSync(path.join(outputDir, 'tileset.json'), JSON.stringify(tileset, null, 2));
   console.log(`Done. ${written} tiles, ${(dirSize(outputDir) / 1024 / 1024).toFixed(1)} MB, ${formatElapsed(started)} -> ${outputDir}`);
+  } finally {
+    removeImageCache(path.dirname(inputPath));
+  }
+}
+
+function removeImageCache(dir: string): void {
+  for (const folder of [dir, os.tmpdir()]) {
+    if (!fs.existsSync(folder)) continue;
+    for (const name of fs.readdirSync(folder)) {
+      const legacy = name.startsWith('.tiler-cache-') && name.endsWith('.png');
+      const current = name.startsWith(`mesh-to-tiles-${process.pid}-`) && name.endsWith('.png');
+      if (legacy || current) fs.rmSync(path.join(folder, name), { force: true });
+    }
+  }
 }
 
 function formatElapsed(started: number): string {

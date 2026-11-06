@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { NodeIO } from '@gltf-transform/core';
 import sharp from 'sharp';
@@ -16,7 +17,7 @@ export async function readGlb(glbPath: string, nodeIo: NodeIO, up: 'z' | 'y'): P
     const texture = prim.getMaterial()?.getBaseColorTexture();
     const image = texture?.getImage();
     if (!posAcc || !uvAcc || !idx || !image) continue;
-    const imagePath = path.join(path.dirname(glbPath), `.tiler-cache-${index}.png`);
+    const imagePath = path.join(os.tmpdir(), `mesh-to-tiles-${process.pid}-${index}.png`);
     fs.writeFileSync(imagePath, await sharp(Buffer.from(image)).png().toBuffer());
     const src = posAcc.getArray();
     if (!src) continue;
